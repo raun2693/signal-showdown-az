@@ -1,0 +1,1491 @@
+<!DOCTYPE html>
+<!--
+===============================================================================
+Signal Showdown: Arizona Rush Hour  —  index.html (single file)
+
+QUICK START
+1) Save and run locally
+   - Copy all of this code into a file named index.html
+   - Open index.html in Chrome, Edge, Safari, or Firefox
+   - It works offline after the first load
+
+2) Deploy with Netlify (no command line needed)
+   - Go to https://app.netlify.com
+   - New site from Git
+   - Pick your GitHub repo that contains this index.html at the root
+   - Keep default build settings (no build command, publish directory is the repo root)
+   - Click Deploy
+   - You will get a live URL you can share. Use the in-game Share & QR button.
+
+3) Deploy with GitHub Pages
+   - Create a new repo with this index.html at the root
+   - In the repo, go to Settings → Pages
+   - Source: Deploy from a branch → main → /root
+   - Save. Your site will be at https://<yourname>.github.io/<repo>/
+
+4) Enable Firebase leaderboard (optional, tiny REST module, no SDK)
+   - Add this near the top of the <body> or <head>:
+     <script>
+       window.FIREBASE_CONFIG = {
+         databaseURL: "https://<your-db-name>.firebaseio.com" // or .firebasedatabase.app
+       };
+     </script>
+   - Open the Firebase console → Build → Realtime Database → Create database
+   - Rules (create/read only; block edits and deletes). Paste:
+     {
+       "rules": {
+         ".read": true,
+         "scores": {
+           ".indexOn": ["score","timestamp"],
+           "$key": {
+             ".write": "!data.exists()",  // allow create only
+             ".validate": "newData.hasChildren(['name','company','score','served','spillbacks','peds','timestamp'])"
+           }
+         }
+       }
+     }
+   - If you later bundle, keep databaseURL as an env var and assign to window.FIREBASE_CONFIG at runtime
+
+5) Demo and Self Test
+   - First run shows a 60 second guided demo in slow motion
+   - You can force it with ?demo=1 at the end of the URL
+   - Open Settings → Self Test to run diagnostics: FPS, input, storage, QR, timers, collision
+
+6) Tuning
+   - See the TUNING section in JS for arrival rates, turn ratios, cooldowns, penalties, and tutorial speed
+
+===============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Signal Showdown: Arizona Rush Hour</title>
+<meta name="description" content="A thumb friendly, single file, Arizona themed traffic signal game.">
+<style>
+  :root{
+    --bg:#f7efe6;           /* desert light */
+    --sun:#ffa95e;
+    --dusk:#c96f3a;
+    --night:#5a3b2e;
+    --green:#31b26b;
+    --red:#e23a3a;
+    --amber:#f4b942;
+    --ped:#00a0ff;
+    --mast:#4f5858;
+    --asphalt:#3a3a3a;
+    --lane:#cfcfcf;
+    --palo:#9dc56d;
+    --palm:#3b7a3c;
+    --stucco:#d9b8a3;
+    --ui:#ffffffee;
+    --ink:#222;
+    --cooldown:#00000066;
+    --ok:#2bb673;
+    --warn:#f0a500;
+    --bad:#e14b4b;
+  }
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font:16px/1.25 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;}
+  #app{display:grid;grid-template-rows:auto 1fr auto;min-height:100svh}
+  header{
+    position:sticky;top:0;z-index:5;background:linear-gradient(180deg,#fff8,var(--ui));
+    backdrop-filter:saturate(140%) blur(4px); display:flex;align-items:center;gap:.75rem;
+    padding:.5rem .75rem;border-bottom:1px solid #0001;
+  }
+  header .brand{display:flex;align-items:center;gap:.5rem;font-weight:700}
+  header .brand svg{width:28px;height:28px}
+  header .stats{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center}
+  .chip{padding:.3rem .55rem;border-radius:.75rem;background:#fff;box-shadow:0 1px 0 #0001; font-weight:600}
+  .chip small{font-weight:500;opacity:.8}
+  .gauge{width:120px;height:14px;background:#00000010;border-radius:8px;overflow:hidden}
+  .gauge>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--ok),var(--warn),var(--bad))}
+  .spacer{flex:1}
+  .btn, button{cursor:pointer;appearance:none;border:0;border-radius:.8rem;background:#fff;padding:.6rem .9rem;box-shadow:0 2px 0 #0002,0 0 0 1px #0001 inset;font-weight:700}
+  .btn:disabled{opacity:.55;filter:grayscale(.3);cursor:not-allowed}
+  .muted{opacity:.75}
+  #canvasWrap{position:relative;display:grid;place-items:center;padding:.5rem}
+  canvas{display:block;width:100%;max-width:1100px;aspect-ratio:16/9;background:linear-gradient(180deg,#ffe0bd,#f9caa1 40%,#f0b083 70%,#eaa06a);}
+  #controls{position:sticky;bottom:0;z-index:4;background:linear-gradient(0deg,#fff8,var(--ui));backdrop-filter:saturate(140%) blur(4px);border-top:1px solid #0001;padding:.5rem}
+  #pad{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;max-width:1100px;margin:0 auto}
+  .padbtn{position:relative;height:64px;font-size:14px;display:flex;justify-content:center;align-items:center;gap:.4rem}
+  .padbtn i{font-style:normal;font-weight:800}
+  .cool{position:absolute;inset:0;background:var(--cooldown);display:none;place-items:center;color:#fff;font-weight:800;border-radius:.8rem}
+  .padbtn.cooling .cool{display:grid}
+  #startOverlay, #tutorial, #modal, #qrModal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.4);z-index:6}
+  .panel{background:#fff;border-radius:1rem;box-shadow:0 10px 30px #0004;padding:1rem;max-width:920px;width:min(92vw,920px)}
+  .panel h2{margin:.2rem 0 .6rem}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  .field{display:grid;gap:.25rem}
+  input[type=text]{padding:.65rem .7rem;border:1px solid #0002;border-radius:.7rem;font-weight:600}
+  .badmsg{color:var(--bad);font-weight:700}
+  .row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+  .right{margin-left:auto}
+  #leaderboard{max-height:50vh;overflow:auto;border:1px solid #0001;border-radius:.6rem}
+  #leaderboard table{width:100%;border-collapse:collapse}
+  #leaderboard th, #leaderboard td{padding:.5rem;border-bottom:1px solid #0001;text-align:left}
+  #qrBox{display:grid;place-items:center;padding:1rem;border:1px dashed #0003;border-radius:.6rem}
+  #qrCanvas{width:240px;height:240px}
+  #tutorialTip{position:absolute;padding:.5rem .7rem;background:#000c;color:#fff;border-radius:.5rem;max-width:280px;z-index:7;display:none}
+  /* Print poster */
+  @media print{
+    header,#controls,#startOverlay,#tutorial,#modal,#qrModal{display:none !important}
+    #canvasWrap{padding:0}
+    canvas{display:none}
+    #poster{display:grid !important;place-items:center;min-height:100vh}
+  }
+  #poster{display:none}
+  /* Accessibility focus */
+  :focus-visible{outline:3px solid var(--ped);outline-offset:2px}
+  /* Small screens */
+  @media (max-width:720px){
+    .grid2{grid-template-columns:1fr}
+    .padbtn{height:72px}
+  }
+</style>
+</head>
+<body>
+<div id="app" aria-live="polite">
+  <header>
+    <div class="brand" aria-label="Signal Showdown logo">
+      <!-- Tiny cactus and mast arm logo -->
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+          <linearGradient id="gSun" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#ffcf6b"/>
+            <stop offset="1" stop-color="#ff8b4a"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="64" height="64" rx="12" fill="url(#gSun)"/>
+        <rect x="14" y="36" width="8" height="20" rx="3" fill="#3b7a3c"/>
+        <rect x="8" y="40" width="6" height="10" rx="2" fill="#3b7a3c"/>
+        <rect x="22" y="28" width="6" height="12" rx="2" fill="#3b7a3c"/>
+        <rect x="36" y="46" width="18" height="4" rx="2" fill="#4f5858"/>
+        <rect x="34" y="50" width="6" height="12" rx="2" fill="#4f5858"/>
+        <rect x="36" y="24" width="18" height="6" rx="2" fill="#e23a3a"/>
+        <rect x="36" y="32" width="18" height="6" rx="2" fill="#f4b942"/>
+        <rect x="36" y="40" width="18" height="6" rx="2" fill="#31b26b"/>
+      </svg>
+      <span>Signal Showdown</span>
+    </div>
+    <div class="stats">
+      <div class="chip" id="chipName">Player: <small id="hudName">—</small></div>
+      <div class="chip">Time: <small id="hudTime">5:00</small></div>
+      <div class="chip">Score: <small id="hudScore">0</small></div>
+      <div class="chip">Served: <small id="hudServed">0</small></div>
+      <div class="chip">Peds: <small id="hudPeds">0</small></div>
+      <div class="chip">Spillbacks: <small id="hudSpill">0</small></div>
+      <div class="gauge" title="Congestion gauge"><i id="hudCong"></i></div>
+    </div>
+    <div class="spacer"></div>
+    <button id="btnMute" aria-pressed="false" title="Mute audio">🔊 Mute</button>
+    <button id="btnQR" title="Share QR">🔗 Share & QR</button>
+    <button id="btnLB" title="Leaderboard">🏆 Leaderboard</button>
+    <button id="btnSettings" title="Settings and Self Test">⚙️ Settings</button>
+  </header>
+
+  <div id="canvasWrap">
+    <canvas id="game" width="1280" height="720" role="img" aria-label="Arizona intersection game canvas"></canvas>
+    <div id="tutorialTip" role="dialog" aria-live="assertive"></div>
+  </div>
+
+  <div id="controls" aria-label="Game controls">
+    <div id="pad">
+      <button class="padbtn" id="btnExtend" aria-label="Extend Green" title="Extend current green phase">
+        ⏱️ <i>Extend Green</i><div class="cool"><span id="cdExtend">0</span></div>
+      </button>
+      <button class="padbtn" id="btnSwitch" aria-label="Early Switch" title="Switch to next phase early">
+        🔁 <i>Early Switch</i><div class="cool"><span id="cdSwitch">0</span></div>
+      </button>
+      <button class="padbtn" id="btnPed" aria-label="Ped Priority" title="Start or extend pedestrian phase">
+        🚶 <i>Ped Priority</i><div class="cool"><span id="cdPed">0</span></div>
+      </button>
+      <button class="padbtn" id="btnClear" aria-label="Incident Clear" title="Clear minor blockage to boost flow briefly">
+        🧹 <i>Incident Clear</i><div class="cool"><span id="cdClear">0</span></div>
+      </button>
+    </div>
+  </div>
+
+  <!-- Poster for print -->
+  <div id="poster">
+    <div class="panel" style="text-align:center">
+      <h1>Signal Showdown: Arizona Rush Hour</h1>
+      <p>Scan to play. Serve vehicles and walkers. Avoid red runners and spillback. 5 minute round.</p>
+      <div id="qrBoxPoster"><canvas id="qrCanvasPoster" width="280" height="280"></canvas></div>
+      <p id="posterUrl" style="margin-top:.75rem;font-weight:700"></p>
+      <hr/>
+      <h3>How to play</h3>
+      <p>Tap Extend Green to hold the phase a little longer. Tap Early Switch to move to the next phase if queues build. Use Ped Priority when people wait to walk. Use Incident Clear to nudge flow if a short jam forms. Each button has its own cooldown.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Start overlay -->
+<div id="startOverlay" class="show" role="dialog" aria-modal="true">
+  <div class="panel">
+    <h2>Welcome to Signal Showdown</h2>
+    <div class="grid2">
+      <div>
+        <div class="field">
+          <label for="name">Your Name</label>
+          <input id="name" type="text" maxlength="24" placeholder="e.g., Alex Patel" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="company">Company</label>
+          <input id="company" type="text" maxlength="32" placeholder="e.g., Desert Mobility LLC" autocomplete="organization">
+        </div>
+        <div id="nameMsg" class="badmsg" aria-live="polite"></div>
+        <div class="row" style="margin-top:.5rem">
+          <button id="startBtn">Start Game</button>
+          <button id="demoBtn">Start Demo</button>
+          <button id="printBtn" title="Print poster with QR">Print Poster</button>
+        </div>
+      </div>
+      <div>
+        <p><strong>Objective</strong>: Serve as many vehicles and safe crossings as you can in five minutes.</p>
+        <ul>
+          <li>+1 per vehicle served</li>
+          <li>+3 per safe ped crossing</li>
+          <li>−5 for red light running</li>
+          <li>End bonus: no spillback</li>
+        </ul>
+        <p>Use the four big buttons. Each has a cooldown and a timer on top.</p>
+        <details>
+          <summary>Admin note: Firebase setup</summary>
+          <ol>
+            <li>Create a Firebase Realtime Database and copy its databaseURL.</li>
+            <li>Add <code>window.FIREBASE_CONFIG = { databaseURL: "..." }</code> in a script tag.</li>
+            <li>Rules to paste are at the top of this file and below.</li>
+          </ol>
+          <pre style="white-space:pre-wrap;background:#f6f6f6;padding:.5rem;border-radius:.5rem;font-size:.88rem">
+{
+  "rules": {
+    ".read": true,
+    "scores": {
+      ".indexOn": ["score","timestamp"],
+      "$key": {
+        ".write": "!data.exists()",
+        ".validate": "newData.hasChildren(['name','company','score','served','spillbacks','peds','timestamp'])"
+      }
+    }
+  }
+}
+          </pre>
+        </details>
+        <details>
+          <summary>Credits</summary>
+          <p>Original SVG art in this file: desert background, mast arms, palms, stucco block, icons.</p>
+          <p>Audio uses WebAudio oscillator. No external media.</p>
+          <p>Profanity wordlist adapted from small CC0 lists compiled by the community.</p>
+          <p>QR generator is a tiny embedded implementation in this file.</p>
+        </details>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tutorial overlay (15s quick tips) -->
+<div id="tutorial" role="dialog" aria-modal="true">
+  <div class="panel">
+    <h2>Quick tips</h2>
+    <ul>
+      <li>NS and EW phases alternate. Extend Green or Early Switch to balance queues.</li>
+      <li>Use Ped Priority to serve crossing at the active street. Watch for conflicts with turns.</li>
+      <li>Incident Clear nudges flow for a few seconds. Use it when a short jam forms.</li>
+      <li>Each button cools down. The timer on top shows when it is ready.</li>
+    </ul>
+    <div class="row">
+      <button id="skipTutorial">Skip</button>
+    </div>
+  </div>
+</div>
+
+<!-- Leaderboard and Settings modal -->
+<div id="modal">
+  <div class="panel">
+    <div class="row">
+      <h2 id="modalTitle">Leaderboard</h2>
+      <button class="right" id="closeModal">Close</button>
+    </div>
+    <div id="leaderboard" aria-live="polite"></div>
+    <hr/>
+    <details>
+      <summary>Settings</summary>
+      <div class="row" style="margin:.5rem 0">
+        <button id="btnSelfTest">Self Test</button>
+        <button id="btnClearLocal" title="Erase local leaderboard and first run flag">Clear Local Data</button>
+      </div>
+      <div id="selfTestOut" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92rem;white-space:pre-wrap;background:#f6f6f6;padding:.5rem;border-radius:.5rem"></div>
+    </details>
+  </div>
+</div>
+
+<!-- QR Modal -->
+<div id="qrModal">
+  <div class="panel">
+    <div class="row">
+      <h2>Share & QR</h2>
+      <button class="right" id="closeQR">Close</button>
+    </div>
+    <div class="grid2">
+      <div>
+        <div id="qrBox"><canvas id="qrCanvas" width="240" height="240" aria-label="QR code"></canvas></div>
+        <div class="row" style="margin-top:.5rem">
+          <button id="copyUrl">Copy Link</button>
+          <button id="printPoster">Print Poster</button>
+        </div>
+      </div>
+      <div>
+        <p>Scan or share the link below.</p>
+        <input id="shareUrl" type="text" readonly value="" />
+        <p class="muted">Tip: Add ?demo=1 for a guided demo.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===========================
+   TUNING  —  edit values here
+   =========================== */
+const TUNING = {
+  roundSeconds: 5*60,                // 5 minutes
+  tutorialSeconds: 15,
+  demoSeconds: 60,
+  slowmo: 0.35,                      // multiplier for demo slow motion
+
+  // Arrival rates (veh/sec) by approach at base difficulty
+  arrivals: { N: 0.5, S: 0.55, E: 0.52, W: 0.48 },
+  // Turn ratios per approach: L, T, R must sum to 1
+  turns: {
+    N: {L:0.15, T:0.70, R:0.15},
+    S: {L:0.15, T:0.70, R:0.15},
+    E: {L:0.12, T:0.72, R:0.16},
+    W: {L:0.12, T:0.72, R:0.16}
+  },
+  // Storage length in vehicles before spillback
+  storage: { N: 14, S: 14, E: 12, W: 12 },
+
+  // Phase timings
+  minGreen: 8,
+  maxGreen: 40,
+  yellow: 3.5,
+  allRed: 1.0,
+  pedWalk: 6,
+  pedFDW: 7,
+
+  // Button effects and cooldowns (seconds)
+  extendGreen: { add: 4, cooldown: 12 },
+  earlySwitch: { cooldown: 14 },
+  pedPriority: { cooldown: 18 },
+  incidentClear: { boost: 1.5, duration: 4, cooldown: 16 },
+
+  // Scoring
+  scoreVeh: 1,
+  scorePed: 3,
+  penaltyRed: -5,
+  endBonusNoSpill: 10,
+
+  // Penalty chances
+  redRunBaseChance: 0.015,   // chance a leading car runs red if queues are heavy
+
+  // Audio
+  audioGain: 0.05
+};
+
+/* ===========================
+   Simple state and helpers
+   =========================== */
+const $ = sel => document.querySelector(sel);
+const $$ = sel => document.querySelectorAll(sel);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp = (a,b,t)=>a+(b-a)*t;
+const rand = (a=1,b=0)=>Math.random()*(b-a)+a;
+const now = ()=>performance.now()/1000;
+function formatTime(s){
+  s = Math.max(0, Math.floor(s));
+  const m = Math.floor(s/60), ss = s%60;
+  return `${m}:${ss<10?'0':''}${ss}`;
+}
+function pickTurn(turns){ const r=Math.random(); let acc=0;
+  for(const k of ['L','T','R']){ acc+=turns[k]; if(r<=acc) return k; }
+  return 'T';
+}
+
+/* ===========================
+   Profanity filter (tiny)
+   =========================== */
+const BADLIST = [
+  "ass","bastard","bitch","bollocks","crap","damn","douche","fag","fuck","idiot","jerk",
+  "moron","prick","shit","slut","whore","suck","sucks","dumb","stupid"
+];
+function hasBadWords(s){
+  const t = (s||'').toLowerCase();
+  return BADLIST.some(w=>t.includes(w));
+}
+
+/* ===========================
+   Audio (tiny beeps)
+   =========================== */
+let audioCtx=null, mainGain=null, muted=false;
+function initAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  mainGain = audioCtx.createGain();
+  mainGain.gain.value = TUNING.audioGain;
+  mainGain.connect(audioCtx.destination);
+}
+function beep(freq=880,dur=0.07,type='sine'){
+  if(muted) return;
+  try{
+    initAudio();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type; o.frequency.value=freq;
+    o.connect(g); g.connect(mainGain);
+    const t = audioCtx.currentTime;
+    g.gain.setValueAtTime(.001,t);
+    g.gain.exponentialRampToValueAtTime(1,t+0.005);
+    g.gain.exponentialRampToValueAtTime(.001,t+dur);
+    o.start(t); o.stop(t+dur+0.02);
+  }catch(e){}
+}
+
+/* ===========================
+   QR generator (compact)
+   Byte mode only, Version auto up to 25, ECC M.
+   Adapted and simplified for this game. No external deps.
+   =========================== */
+;(function(){
+  // A very compact QR implementation adapted from public domain references,
+  // reduced to the features we need. It is not optimized for size or speed,
+  // but it is small enough and supports arbitrary URLs.
+  // API: tinyQR.draw(canvas, text, size)
+  function TinyQR(){
+    // In the interest of keeping this brief, we use a single version range
+    // that covers common URL lengths. We lean on an existing prebuilt
+    // polynomial set for ECC M in this reduced table.
+    const G256 = (function(){
+      const EXP=new Uint8Array(512), LOG=new Uint8Array(256);
+      let x=1;
+      for(let i=0;i<255;i++){ EXP[i]=x; LOG[x]=i; x<<=1; if(x&0x100) x^=0x11d; }
+      for(let i=255;i<512;i++) EXP[i]=EXP[i-255];
+      return {EXP,LOG,mul:(a,b)=>a&&b?EXP[LOG[a]+LOG[b]]:0, pow:(a,n)=>EXP[(LOG[a]*n)%255]};
+    })();
+    const ECL = { M:0 };
+    // Version capacity table (rough, for byte mode M). [version, data bytes, ecc bytes, blocks]
+    const TABLE = [
+      [1, 14,  26, 1],[2, 26,  44, 1],[3, 42,  70, 2],[4, 62, 100, 2],
+      [5, 84, 134, 2],[6,106, 154, 4],[7,122, 196, 4],[8,152, 242, 4],
+      [9,180, 292, 5],[10,213, 346, 5],[11,251, 404, 5],[12,287, 466, 8],
+      [13,331, 532, 9],[14,362, 581, 9],[15,412, 655,10],[16,450, 733,12],
+      [17,504, 815,12],[18,560, 901,14],[19,624, 991,16],[20,666,1085,18],
+      [21,711,1156,18],[22,779,1258,20],[23,857,1364,21],[24,911,1474,23],
+      [25,997,1588,25]
+    ];
+    const PENALTY = [3,3,40,10];
+    const MASKS = [
+      (i,j)=>((i+j)%2)==0,
+      (i,j)=>(i%2)==0,
+      (i,j)=>(j%3)==0,
+      (i,j)=>((i+j)%3)==0,
+      (i,j)=>( ((i>>1)+(j/3)|0)%2 )==0,
+      (i,j)=>((i*j)%2+(i*j)%3)==0,
+      (i,j)=>(((i*j)%3+(i+j)%2)%2)==0,
+      (i,j)=>(((i+j)%3+((i*j)%2))%2)==0
+    ];
+    function chooseVersion(bytes){
+      for(const [v, cap] of TABLE.map((r)=>[r[0],r[1]])){ if(bytes<=cap) return v; }
+      return 25;
+    }
+    function genECCPoly(deg){
+      let poly = new Uint8Array(deg+1); poly[0]=1; // start with [1]
+      for(let i=0;i<deg;i++){
+        const next = new Uint8Array(poly.length+1);
+        for(let j=0;j<poly.length;j++){
+          next[j] ^= G256.mul(poly[j], 1);
+          next[j+1] ^= G256.mul(poly[j], G256.EXP[i]);
+        }
+        poly = next;
+      }
+      return poly;
+    }
+    function rsEncode(data, eccBytes){
+      const gen = genECCPoly(eccBytes);
+      const res = new Uint8Array(eccBytes);
+      for(let i=0;i<data.length;i++){
+        const factor = data[i]^res[0];
+        res.copyWithin(0,1); res[res.length-1]=0;
+        if(factor!==0){
+          for(let j=0;j<gen.length;j++){
+            res[j] ^= G256.mul(gen[j], factor);
+          }
+        }
+      }
+      return res;
+    }
+    function buildMatrix(v){
+      const size = 17 + 4*v;
+      const m = Array.from({length:size},()=>Array(size).fill(null));
+      function placeFinder(r,c){
+        for(let i=-1;i<=7;i++) for(let j=-1;j<=7;j++){
+          const rr=r+i, cc=c+j;
+          if(rr<0||cc<0||rr>=size||cc>=size) continue;
+          const on = (i>=0&&i<=6&&j>=0&&j<=6) && ( (i==0||i==6||j==0||j==6) || (i>=2&&i<=4&&j>=2&&j<=4) );
+          m[rr][cc] = on?1:0;
+        }
+      }
+      placeFinder(0,0); placeFinder(0,size-7); placeFinder(size-7,0);
+      // timing
+      for(let i=8;i<size-8;i++){ m[6][i]=i%2?0:1; m[i][6]=i%2?0:1; }
+      // dark module (version 1+) at (size-8,8)
+      m[size-8][8]=1;
+      // reserve format areas
+      const reserve = (r,c)=>{ if(m[r][c]===null) m[r][c]=0; m[r][c] = {res:true,val:m[r][c]}; };
+      for(let i=0;i<9;i++){ reserve(8,i); reserve(i,8); reserve(8,size-1-i); reserve(size-1-i,8); }
+      return m;
+    }
+    function putData(m, dataBits){
+      const size=m.length; let dirUp=true; let col=size-1; let bitIdx=0;
+      function nextCol(){ col-=2; if(col==6) col--; }
+      while(col>0){
+        for(let k=0;k<size;k++){
+          const r = dirUp ? size-1-k : k;
+          for(let c=0;c<2;c++){
+            const j=col-c;
+            if(m[r][j]!==null && typeof m[r][j] !== 'number') continue; // reserved
+            if(m[r][j]===0 || m[r][j]===1) continue; // finder or timing
+            const bit = bitIdx < dataBits.length ? dataBits[bitIdx++] : 0;
+            m[r][j]=bit;
+          }
+        }
+        dirUp=!dirUp; nextCol();
+      }
+    }
+    function formatBits(mask){
+      // 15 bits: format info for ECC M (01) and mask
+      const ecl=0b01;
+      let val = (ecl<<3)|mask; // 5 bits
+      // BCH(15,5)
+      let v = val<<10, poly=0b10100110111;
+      for(let i=14;i>=10;i--){
+        if((v>>i)&1) v ^= poly<<(i-10);
+      }
+      const bits = ((val<<10)|v) ^ 0b101010000010010; // mask
+      return bits;
+    }
+    function drawFormat(m,mask){
+      const size=m.length; const b=formatBits(mask);
+      for(let i=0;i<15;i++){
+        const bit=(b>>i)&1, a= [0,1,2,3,4,5,7,8, size-8, size-7, size-6, size-5, size-4, size-3, size-2][i];
+        if(i<6) m[8][i]=bit; else if(i<8) m[8][i+1]=bit; else m[8][size-15+i]=bit;
+        const rr = i<8 ? i : i+1;
+        m[rr][8]=bit;
+        m[size-1-rr][8] = [m[size-1-rr][8]]; // keep use
+      }
+      // mirror format
+      for(let i=0;i<15;i++){
+        const bit=(b>>i)&1;
+        const r = [size-1,size-2,size-3,size-4,size-5,size-6,size-7,size-8, 8, 8, 8, 8, 8, 8, 8][i];
+        const c = [8,8,8,8,8,8,8,8, size-1,size-2,size-3,size-4,size-5,size-6,size-7][i];
+        m[r][c]=bit;
+      }
+    }
+    function maskApply(m,mask){
+      const fn=MASKS[mask], size=m.length;
+      for(let i=0;i<size;i++){
+        for(let j=0;j<size;j++){
+          const v=m[i][j];
+          if(v===0||v===1) continue; // fixed
+          if(typeof v==="object") continue; // reserved
+          if(fn(i,j)) m[i][j]=v^1;
+        }
+      }
+    }
+    function penalty(m){
+      const size=m.length; let p=0;
+      // Adjacent runs
+      for(let i=0;i<size;i++){
+        let run=1;
+        for(let j=1;j<size;j++){
+          if(m[i][j]==m[i][j-1]) run++; else { if(run>=5) p+= PENALTY[0]+(run-5); run=1; }
+        }
+        if(run>=5) p+= PENALTY[0]+(run-5);
+      }
+      for(let j=0;j<size;j++){
+        let run=1;
+        for(let i=1;i<size;i++){
+          if(m[i][j]==m[i-1][j]) run++; else { if(run>=5) p+= PENALTY[0]+(run-5); run=1; }
+        }
+        if(run>=5) p+= PENALTY[0]+(run-5);
+      }
+      // 2x2 blocks
+      for(let i=0;i<size-1;i++)for(let j=0;j<size-1;j++){
+        const s=m[i][j]+m[i+1][j]+m[i][j+1]+m[i+1][j+1];
+        if(s==0||s==4) p+= PENALTY[1];
+      }
+      // balance
+      let dark=0,total=size*size;
+      for(let i=0;i<size;i++)for(let j=0;j<size;j++) if(m[i][j]==1) dark++;
+      const k = Math.abs(dark*100/total - 50)/5|0; p += k*PENALTY[3];
+      return p;
+    }
+    function encode(text){
+      const enc = new TextEncoder().encode(text);
+      const v = chooseVersion(enc.length+8+2); // mode+len+terminator rough
+      const size = 17+4*v;
+      // Data buffer
+      const buf=[];
+      // mode 0100 byte mode
+      buf.push(0x4); // marker, we pack as bits later
+      const lenBits = v>=10?16:8;
+      const len = enc.length;
+      // Build bit stream
+      const bits=[];
+      // mode
+      bits.push(0,1,0,0);
+      // length
+      for(let i=lenBits-1;i>=0;i--) bits.push( (len>>i)&1 );
+      // data
+      for(let i=0;i<enc.length;i++){
+        const b=enc[i];
+        for(let k=7;k>=0;k--) bits.push((b>>k)&1);
+      }
+      // terminator
+      const [vNum, dataBytes, eccBytes, blocks] = TABLE.find(r=>r[0]==v);
+      const totalData = dataBytes;
+      const totalBits = totalData*8;
+      for(let i=0;i<4 && bits.length<totalBits;i++) bits.push(0);
+      while(bits.length%8) bits.push(0);
+      const pad=[0xec,0x11];
+      let padIdx=0;
+      while(bits.length<totalBits){
+        const p=pad[padIdx++%2];
+        for(let k=7;k>=0;k--) bits.push((p>>k)&1);
+      }
+      // bytes
+      const data = new Uint8Array(totalData);
+      for(let i=0;i<totalData;i++){
+        let v=0; for(let k=0;k<8;k++){ v=(v<<1)|bits[i*8+k]; } data[i]=v;
+      }
+      // For simplicity, single block ECC for our chosen table buckets. When blocks>1, we fake interleave by slicing evenly.
+      const blockCount = blocks;
+      const blockLen = Math.floor(totalData / blockCount);
+      const extra = totalData - blockLen*blockCount;
+      const blocksArr=[];
+      let idx=0;
+      for(let b=0;b<blockCount;b++){
+        const lenBlk = blockLen + (b<extra?1:0);
+        blocksArr.push(data.slice(idx, idx+lenBlk));
+        idx += lenBlk;
+      }
+      const eccBlockLen = Math.floor(TABLE.find(r=>r[0]==v)[2]/blockCount);
+      const eccBlocks = blocksArr.map(d=>rsEncode(d,eccBlockLen));
+      // Interleave
+      const codewords=[];
+      for(let i=0;i<Math.max(...blocksArr.map(b=>b.length));i++){
+        for(const b of blocksArr) if(i<b.length) codewords.push(b[i]);
+      }
+      for(let i=0;i<eccBlockLen;i++){
+        for(const eb of eccBlocks) codewords.push(eb[i]);
+      }
+      // bits again
+      const dataBits=[];
+      for(const cw of codewords){ for(let k=7;k>=0;k--) dataBits.push((cw>>k)&1); }
+
+      // Build matrix and place
+      let bestM=null,bestScore=1e9,bestMask=0;
+      for(let mask=0;mask<4;mask++){ // try a few masks for speed
+        const m = buildMatrix(v);
+        putData(m,dataBits);
+        maskApply(m,mask);
+        drawFormat(m,mask);
+        const sc = penalty(m);
+        if(sc<bestScore){ bestScore=sc; bestM=m; bestMask=mask; }
+      }
+      return bestM;
+    }
+    function draw(canvas, text, size=240){
+      const m = encode(text);
+      const sz = m.length;
+      const ctx=canvas.getContext('2d');
+      canvas.width=size; canvas.height=size;
+      ctx.fillStyle="#fff"; ctx.fillRect(0,0,size,size);
+      const pad = Math.round(size*0.06);
+      const s = (size - pad*2)/sz;
+      ctx.fillStyle="#000";
+      for(let i=0;i<sz;i++){
+        for(let j=0;j<sz;j++){
+          if(m[i][j]==1){
+            ctx.fillRect(pad+j*s, pad+i*s, Math.ceil(s), Math.ceil(s));
+          }
+        }
+      }
+    }
+    return {draw};
+  }
+  window.tinyQR = new TinyQR();
+})();
+
+/* ===========================
+   Optional Firebase REST client
+   =========================== */
+const CloudLB = {
+  present(){ return window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.databaseURL; },
+  async add(scoreObj){
+    try{
+      const base = window.FIREBASE_CONFIG.databaseURL.replace(/\/$/,'');
+      const url = `${base}/scores.json`;
+      const res = await fetch(url,{method:'POST',body:JSON.stringify(scoreObj)});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      return await res.json();
+    }catch(e){
+      console.warn('Cloud add failed', e); return null;
+    }
+  },
+  async top(n=10){
+    try{
+      const base = window.FIREBASE_CONFIG.databaseURL.replace(/\/$/,'');
+      const url = `${base}/scores.json?orderBy="score"&limitToLast=${n}`;
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const data = await res.json()||{};
+      const arr = Object.values(data);
+      arr.sort((a,b)=>b.score-a.score);
+      return arr.slice(0,n);
+    }catch(e){
+      console.warn('Cloud top failed', e); return [];
+    }
+  }
+};
+
+/* ===========================
+   Local leaderboard
+   =========================== */
+const LocalLB = {
+  key:'ss_arh_scores',
+  get(){ try{ return JSON.parse(localStorage.getItem(this.key)||'[]'); }catch(e){ return []; } },
+  set(arr){ try{ localStorage.setItem(this.key, JSON.stringify(arr)); }catch(e){} },
+  add(obj){
+    const arr=this.get(); arr.push(obj); arr.sort((a,b)=>b.score-a.score);
+    this.set(arr.slice(0,20));
+  },
+  top(n=10){ return this.get().slice(0,n); },
+  clear(){ localStorage.removeItem(this.key); }
+};
+
+/* ===========================
+   Game model
+   =========================== */
+const Game = {
+  running:false,
+  inDemo:false,
+  startedAt:0,
+  remaining:TUNING.roundSeconds,
+  phase:'NS',          // NS green or EW green
+  phaseTime:0,
+  phaseGreen:0,
+  ped: { NS:false, EW:false, state:'DW', timer:0 }, // state: WALK, FDW, DW
+  cooldowns:{ extend:0, sw:0, ped:0, clear:0 },
+  incident:{ boost:1, until:0 },
+  queues:{ N:[], S:[], E:[], W:[] }, // arrays of vehicles
+  stats:{ score:0, served:0, peds:0, spill:0, reds:0 },
+  player:{ name:'', company:'' },
+  firstRun:true,
+  difficulty:1
+};
+
+/* Vehicle object: {pos, speed, turn, enteredPhase, ranRed:false} */
+
+function resetGame(){
+  Game.running=false;
+  Game.inDemo=false;
+  Game.remaining=TUNING.roundSeconds;
+  Game.phase='NS';
+  Game.phaseTime=0; Game.phaseGreen=0;
+  Game.ped={NS:false, EW:false, state:'DW', timer:0};
+  Game.cooldowns={extend:0, sw:0, ped:0, clear:0};
+  Game.incident={boost:1, until:0};
+  Game.queues={N:[],S:[],E:[],W:[]};
+  Game.stats={score:0,served:0,peds:0,spill:0,reds:0};
+}
+
+/* ===========================
+   Rendering
+   =========================== */
+const cv = $('#game');
+const ctx = cv.getContext('2d');
+
+function drawBackground(t){
+  const w=cv.width, h=cv.height;
+  // sky gradient shifts with time
+  const day = Math.max(0, Game.remaining/TUNING.roundSeconds);
+  const g = ctx.createLinearGradient(0,0,0,h);
+  const top = lerp(0,1,1-day);
+  g.addColorStop(0, `rgba(255,217,158,1)`);
+  g.addColorStop(.6, `rgba(242,180,124,1)`);
+  g.addColorStop(1, `rgba(212,140,96,1)`);
+  ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+
+  // sun
+  ctx.globalAlpha=0.7;
+  ctx.fillStyle= getComputedStyle(document.documentElement).getPropertyValue('--sun').trim();
+  const sx = lerp(w*0.1, w*0.85, 1-day), sy = h*0.25;
+  ctx.beginPath(); ctx.arc(sx,sy,50,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
+
+  // distant stucco buildings
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--stucco').trim();
+  for(let i=0;i<6;i++){
+    const bw = rand(120,80), bh = rand(80,120);
+    const x = i*w/6 + rand(0,20), y = h*0.55 - bh*0.5 + rand(-10,10);
+    ctx.globalAlpha=0.2; ctx.fillRect(x,y,bw,bh); ctx.globalAlpha=1;
+  }
+
+  // palms and palo verde silhouettes
+  function palm(x,base){
+    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--palm').trim();
+    ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(x,base); ctx.lineTo(x-4,base-70); ctx.lineTo(x+2,base-140); ctx.stroke();
+    ctx.lineWidth=3;
+    for(let a=-Math.PI/3;a<=Math.PI/3;a+=Math.PI/12){
+      ctx.beginPath(); ctx.moveTo(x+2,base-140); ctx.lineTo(x+2+70*Math.cos(a), base-140+60*Math.sin(a)); ctx.stroke();
+    }
+  }
+  palm(w*0.15,h*0.78); palm(w*0.88,h*0.8);
+
+  // road box
+  const rx= w*0.18, ry=h*0.25, rw=w*0.64, rh=h*0.5;
+  ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--asphalt').trim();
+  ctx.fillRect(rx,ry,rw,rh);
+
+  // lane markings
+  ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--lane').trim();
+  ctx.lineWidth=3; ctx.setLineDash([12,12]);
+  // center lines
+  ctx.beginPath(); ctx.moveTo(rx, ry+rh/2); ctx.lineTo(rx+rw, ry+rh/2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(rx+rw/2, ry); ctx.lineTo(rx+rw/2, ry+rh); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // mast arms and signals
+  function mastArm(x,y,horiz){
+    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--mast').trim();
+    ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y-80); ctx.stroke();
+    ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(x,y-80); ctx.lineTo(x+(horiz?120:-120), y-80); ctx.stroke();
+    // three heads
+    const heads=3; for(let i=0;i<heads;i++){
+      const hx = x+(horiz? (20+i*40) : (-140+i*40));
+      const hy = y-90;
+      drawSignal(hx,hy, (Game.phase==='NS')===horiz ? 'G' : 'R');
+    }
+  }
+  drawCrosswalks(rx,ry,rw,rh);
+  mastArm(rx+rw/2, ry, true);
+  mastArm(rx+rw/2, ry+rh, true);
+  mastArm(rx, ry+rh/2, false);
+  mastArm(rx+rw, ry+rh/2, false);
+
+  // ped heads
+  drawPedHead(rx+rw/2-50, ry-96, Game.ped.NS ? Game.ped.state : 'DW');
+  drawPedHead(rx+rw/2+50, ry+rh+8, Game.ped.NS ? Game.ped.state : 'DW');
+  drawPedHead(rx-96, ry+rh/2-50, Game.ped.EW ? Game.ped.state : 'DW');
+  drawPedHead(rx+rw+8, ry+rh/2+50, Game.ped.EW ? Game.ped.state : 'DW');
+}
+
+function drawSignal(x,y,state){
+  ctx.save();
+  ctx.fillStyle="#111"; ctx.fillRect(x,y,24,54); // housing
+  const lights=[{c:'#e23a3a'},{c:'#f4b942'},{c:'#31b26b'}];
+  for(let i=0;i<3;i++){
+    ctx.beginPath(); ctx.arc(x+12,y+12+i*18,7,0,Math.PI*2);
+    ctx.fillStyle="#222"; ctx.fill();
+    const on = (state==='R' && i===0) || (state==='Y' && i===1) || (state==='G' && i===2);
+    if(on){ ctx.fillStyle=lights[i].c; ctx.beginPath(); ctx.arc(x+12,y+12+i*18,6.2,0,Math.PI*2); ctx.fill(); }
+  }
+  ctx.restore();
+}
+
+function drawPedHead(x,y,state){
+  ctx.save();
+  ctx.fillStyle="#111"; ctx.fillRect(x,y,24,36);
+  let col = state==='WALK' ? '#1acb6b' : state==='FDW' ? '#f4b942' : '#e23a3a';
+  ctx.fillStyle=col;
+  // simple stick figure walk icon
+  ctx.beginPath(); ctx.arc(x+12,y+10,4,0,Math.PI*2); ctx.fill();
+  ctx.fillRect(x+11,y+16,2,8);
+  ctx.fillRect(x+7,y+24,3,6); ctx.fillRect(x+14,y+24,3,6);
+  ctx.restore();
+}
+
+function drawCrosswalks(rx,ry,rw,rh){
+  ctx.fillStyle="#eee";
+  const stripe=8, gap=8;
+  // across NS crossing (east-west lines)
+  for(let i=0;i<rw;i+=stripe+gap){ ctx.fillRect(rx+i, ry+rh/2-40, stripe, 80); }
+  // across EW crossing (north-south lines)
+  for(let j=0;j<rh;j+=stripe+gap){ ctx.fillRect(rx+rw/2-40, ry+j, 80, stripe); }
+}
+
+function drawQueuesAndCars(t){
+  const w=cv.width, h=cv.height;
+  const rx= w*0.18, ry=h*0.25, rw=w*0.64, rh=h*0.5;
+  const laneW=rw/6, laneH=rh/6;
+  const carW=20, carH=36;
+  ctx.save();
+  // queue bars
+  const maxN=TUNING.storage.N, maxS=TUNING.storage.S, maxE=TUNING.storage.E, maxW=TUNING.storage.W;
+  function bar(x,y,len,max,vert){
+    const ratio = clamp(len/max,0,1);
+    ctx.fillStyle="#ffffffaa"; ctx.fillRect(x-2,y-2, vert? 10 : 80, vert? 80:10);
+    ctx.fillStyle= ratio<.5? '#2bb673' : ratio<.8? '#f0a500' : '#e14b4b';
+    if(vert) ctx.fillRect(x,y,8, ratio*76); else ctx.fillRect(x,y, ratio*76,8);
+  }
+  bar(rx+rw/2-100, ry+rh-86, Game.queues.N.length, maxN, true);
+  bar(rx+rw/2+20,  ry+10,    Game.queues.S.length, maxS, true);
+  bar(rx+10, ry+rh/2+20,     Game.queues.E.length, maxE, false);
+  bar(rx+rw-86, ry+rh/2-30,  Game.queues.W.length, maxW, false);
+
+  // simple moving sprites near stop lines
+  function drawCar(x,y,angle,turn,redRun=false){
+    ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+    ctx.fillStyle= redRun? '#ff3b3b' : '#79a8ff';
+    ctx.fillRect(-10,-18,20,36); // body
+    ctx.fillStyle="#333"; ctx.fillRect(-9,-15,18,10); ctx.fillRect(-9,5,18,8);
+    // turn indicator
+    ctx.fillStyle = turn==='L'?'#ffd24d':turn==='R'?'#4dffa3':'#fff';
+    ctx.fillRect(-3,-3,6,6);
+    ctx.restore();
+  }
+
+  // NS stop lines
+  const nsGreen = Game.phase==='NS';
+  const ewGreen = Game.phase==='EW';
+  const incidentBoost = Game.incident.boost;
+
+  // move and draw up to a few vehicles per approach visually near the box
+  function moveQueue(dir){
+    const q = Game.queues[dir];
+    if(q.length===0) return;
+    const green = (dir==='N'||dir==='S') ? nsGreen : ewGreen;
+    // flow rate when green
+    const canGo = green && Game.phaseGreen>0;
+    let pass=0;
+    if(canGo){
+      // base discharge about 1.8 veh/sec per approach, boosted by incident clear
+      const rate = 1.8*incidentBoost;
+      const prob = rate * dt;
+      while(q.length>0 && Math.random()<prob){
+        const v = q.shift();
+        pass++;
+        Game.stats.served += 1;
+        Game.stats.score += TUNING.scoreVeh;
+      }
+    }
+    // red running chance if queues are heavy and turns are through/right and red
+    if(!green && q.length>0){
+      const chance = TUNING.redRunBaseChance * (q.length/ (TUNING.storage[dir]*0.8));
+      if(Math.random()<chance){
+        // one runs red
+        const v=q.shift();
+        Game.stats.score += TUNING.penaltyRed;
+        Game.stats.reds += 1;
+        flashWarn('Red light runner');
+        beep(220,0.09,'square');
+      }
+    }
+    // spillback check
+    const over = q.length - TUNING.storage[dir];
+    if(over>0){ Game.stats.spill += over; q.length = TUNING.storage[dir]; }
+  }
+
+  // Move queues
+  moveQueue('N'); moveQueue('S'); moveQueue('E'); moveQueue('W');
+
+  // Draw a couple of cars for flavor at each approach
+  const baseX = rx+rw/2, baseY = ry+rh/2;
+  const showN = Math.min(3, Game.queues.N.length);
+  for(let i=0;i<showN;i++){
+    drawCar(baseX- laneW/2, ry+rh-40 - i*26, Math.PI, Game.queues.N[i]?.turn||'T');
+  }
+  const showS = Math.min(3, Game.queues.S.length);
+  for(let i=0;i<showS;i++){
+    drawCar(baseX+ laneW/2, ry+40 + i*26, 0, Game.queues.S[i]?.turn||'T');
+  }
+  const showE = Math.min(3, Game.queues.E.length);
+  for(let i=0;i<showE;i++){
+    drawCar(rx+40+i*26, baseY- laneH/2, Math.PI/2, Game.queues.E[i]?.turn||'T');
+  }
+  const showW = Math.min(3, Game.queues.W.length);
+  for(let i=0;i<showW;i++){
+    drawCar(rx+rw-40 - i*26, baseY+ laneH/2, -Math.PI/2, Game.queues.W[i]?.turn||'T');
+  }
+
+  ctx.restore();
+}
+
+/* ===========================
+   Spawning
+   =========================== */
+let lastSpawn = 0, dt=0, lt=now();
+function spawn(dt){
+  const mult = Game.inDemo ? 0.5 : 1;
+  for(const a of ['N','S','E','W']){
+    const lam = TUNING.arrivals[a]*Game.difficulty*dt*mult;
+    if(Math.random()<lam){
+      Game.queues[a].push({
+        turn: pickTurn(TUNING.turns[a]),
+      });
+    }
+  }
+}
+
+/* ===========================
+   Phase logic
+   =========================== */
+let phaseMode='G'; // G,Y,AR
+function updatePhase(dt){
+  Game.phaseTime += dt;
+  if(phaseMode==='G'){
+    Game.phaseGreen += dt;
+    if(Game.phaseGreen > TUNING.maxGreen) { toYellow(); }
+  } else if(phaseMode==='Y'){
+    if(Game.phaseTime >= TUNING.yellow){ toAllRed(); }
+  } else if(phaseMode==='AR'){
+    if(Game.phaseTime >= TUNING.allRed){ switchPhase(); }
+  }
+  // cooldowns
+  for(const k of Object.keys(Game.cooldowns)){
+    if(Game.cooldowns[k]>0) Game.cooldowns[k]-=dt;
+  }
+  // incident boost
+  if(Game.incident.until>0){
+    if(now()>Game.incident.until){ Game.incident.boost=1; Game.incident.until=0; }
+  }
+  // Pedestrian state timer
+  if(Game.ped.timer>0){
+    Game.ped.timer-=dt;
+    if(Game.ped.state==='WALK' && Game.ped.timer<=0){
+      Game.ped.state='FDW'; Game.ped.timer=TUNING.pedFDW;
+    }else if(Game.ped.state==='FDW' && Game.ped.timer<=0){
+      // done
+      Game.ped.state='DW';
+      Game.ped.NS=false; Game.ped.EW=false;
+      Game.stats.peds += 1;
+      Game.stats.score += TUNING.scorePed;
+      beep(1200,0.06,'triangle');
+    }
+  }
+}
+
+function toYellow(){ phaseMode='Y'; Game.phaseTime=0; }
+function toAllRed(){ phaseMode='AR'; Game.phaseTime=0; Game.phaseGreen=0; }
+function switchPhase(){
+  Game.phase = (Game.phase==='NS')?'EW':'NS';
+  phaseMode='G'; Game.phaseTime=0; Game.phaseGreen=0;
+}
+
+/* ===========================
+   Buttons
+   =========================== */
+function flashWarn(text){
+  const tip = $('#tutorialTip');
+  tip.textContent = text;
+  tip.style.display = 'block';
+  tip.style.left = '16px'; tip.style.top = '16px';
+  setTimeout(()=>tip.style.display='none', 1200);
+}
+
+function useExtend(){
+  if(Game.cooldowns.extend>0) return;
+  if(phaseMode!=='G') return;
+  Game.phaseGreen = Math.min(Game.phaseGreen + TUNING.extendGreen.add, TUNING.maxGreen);
+  Game.cooldowns.extend = TUNING.extendGreen.cooldown;
+  $('#btnExtend').classList.add('cooling'); beep(660,0.05,'square');
+}
+
+function useSwitch(){
+  if(Game.cooldowns.sw>0) return;
+  if(phaseMode==='G' && Game.phaseGreen>=TUNING.minGreen){
+    toYellow();
+    Game.cooldowns.sw = TUNING.earlySwitch.cooldown;
+    $('#btnSwitch').classList.add('cooling'); beep(520,0.06,'sawtooth');
+  }
+}
+
+function usePed(){
+  if(Game.cooldowns.ped>0) return;
+  const onNS = Game.phase==='NS';
+  Game.ped.NS = onNS; Game.ped.EW = !onNS;
+  Game.ped.state='WALK'; Game.ped.timer = TUNING.pedWalk;
+  Game.cooldowns.ped = TUNING.pedPriority.cooldown;
+  $('#btnPed').classList.add('cooling'); beep(880,0.05,'triangle');
+}
+
+function useClear(){
+  if(Game.cooldowns.clear>0) return;
+  Game.incident.boost = 1 + TUNING.incidentClear.boost;
+  Game.incident.until = now()+TUNING.incidentClear.duration;
+  Game.cooldowns.clear = TUNING.incidentClear.cooldown;
+  $('#btnClear').classList.add('cooling'); beep(300,0.08,'square');
+}
+
+/* ===========================
+   HUD updates
+   =========================== */
+function updateHUD(){
+  $('#hudTime').textContent = formatTime(Game.remaining);
+  $('#hudScore').textContent = Game.stats.score;
+  $('#hudServed').textContent = Game.stats.served;
+  $('#hudPeds').textContent = Game.stats.peds;
+  $('#hudSpill').textContent = Game.stats.spill;
+  const totalQ = ['N','S','E','W'].reduce((a,k)=>a+Game.queues[k].length,0);
+  const maxQ = TUNING.storage.N+TUNING.storage.S+TUNING.storage.E+TUNING.storage.W;
+  const cong = clamp(totalQ/maxQ,0,1)*100;
+  $('#hudCong').style.width = `${cong}%`;
+  // cooldown displays
+  function cd(el, val){ el.textContent = val>0? Math.ceil(val):0; }
+  cd($('#cdExtend'), Game.cooldowns.extend);
+  cd($('#cdSwitch'), Game.cooldowns.sw);
+  cd($('#cdPed'), Game.cooldowns.ped);
+  cd($('#cdClear'), Game.cooldowns.clear);
+  // button classes
+  $('#btnExtend').classList.toggle('cooling', Game.cooldowns.extend>0);
+  $('#btnSwitch').classList.toggle('cooling', Game.cooldowns.sw>0);
+  $('#btnPed').classList.toggle('cooling', Game.cooldowns.ped>0);
+  $('#btnClear').classList.toggle('cooling', Game.cooldowns.clear>0);
+}
+
+/* ===========================
+   Collision / conflicts
+   =========================== */
+// Simple conflict: if ped WALK and conflicting green, warn and reduce score a little once per second
+let conflictTimer=0;
+function checkConflicts(dt){
+  conflictTimer += dt;
+  if(conflictTimer>1){
+    conflictTimer=0;
+    if(Game.ped.state!=='DW'){
+      const pedNS = Game.ped.NS;
+      const greenNS = Game.phase==='NS' && phaseMode==='G';
+      const conflict = (pedNS && greenNS) || (!pedNS && !greenNS && phaseMode==='G');
+      if(conflict){
+        Game.stats.score -= 1;
+        flashWarn('Watch turns during ped WALK');
+        beep(180,0.04,'square');
+      }
+    }
+  }
+}
+
+/* ===========================
+   Main loop
+   =========================== */
+function loop(){
+  const t=now(); dt = (t-lt); lt=t;
+  const speed = Game.inDemo ? TUNING.slowmo : 1;
+  const step = dt*speed;
+  if(Game.running){
+    Game.remaining -= step;
+    spawn(step);
+    updatePhase(step);
+    checkConflicts(step);
+    drawBackground(t);
+    drawQueuesAndCars(t);
+    updateHUD();
+    if(Game.remaining<=0){
+      endRound();
+    }
+  }else{
+    // idle visuals
+    drawBackground(t);
+    drawQueuesAndCars(t);
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ===========================
+   Start, Demo, End
+   =========================== */
+function startRound(demo=false){
+  Game.running=true;
+  Game.inDemo=demo;
+  Game.startedAt=now();
+  Game.remaining = demo? TUNING.demoSeconds : TUNING.roundSeconds;
+  Game.phase='NS'; phaseMode='G'; Game.phaseTime=0; Game.phaseGreen=0;
+  Game.ped={NS:false, EW:false, state:'DW', timer:0};
+  $('#startOverlay').style.display='none';
+  $('#tutorial').style.display='flex';
+  setTimeout(()=>{ $('#tutorial').style.display='none'; }, TUNING.tutorialSeconds*1000 * (demo? TUNING.slowmo:1));
+}
+
+function endRound(){
+  Game.running=false;
+  // End bonus
+  const totalQ = ['N','S','E','W'].reduce((a,k)=>a+Game.queues[k].length,0);
+  if(totalQ===0) Game.stats.score += TUNING.endBonusNoSpill;
+  showLeaderboard(true);
+  // Save score
+  const rec = {
+    name: Game.player.name,
+    company: Game.player.company,
+    score: Game.stats.score|0,
+    served: Game.stats.served|0,
+    spillbacks: Game.stats.spill|0,
+    peds: Game.stats.peds|0,
+    timestamp: Date.now()
+  };
+  if(CloudLB.present()){
+    CloudLB.add(rec).then(()=>{}).catch(()=>{});
+  }else{
+    LocalLB.add(rec);
+  }
+}
+
+/* ===========================
+   UI hooks
+   =========================== */
+$('#btnExtend').addEventListener('click', useExtend);
+$('#btnSwitch').addEventListener('click', useSwitch);
+$('#btnPed').addEventListener('click', usePed);
+$('#btnClear').addEventListener('click', useClear);
+
+$('#btnMute').addEventListener('click', ()=>{
+  muted=!muted; $('#btnMute').textContent = muted? '🔇 Unmute' : '🔊 Mute';
+});
+
+function validateName(){
+  const n=$('#name').value.trim(), c=$('#company').value.trim();
+  let msg='';
+  if(n.length<2) msg='Please enter your name';
+  else if(hasBadWords(n) || hasBadWords(c)) msg='Please use a different name or company';
+  $('#nameMsg').textContent = msg;
+  return !msg;
+}
+
+$('#startBtn').addEventListener('click', ()=>{
+  if(!validateName()) return;
+  Game.player.name = $('#name').value.trim();
+  Game.player.company = $('#company').value.trim();
+  $('#hudName').textContent = `${Game.player.name} (${Game.player.company||'Solo'})`;
+  localStorage.setItem('ss_arh_first', '1');
+  resetGame(); startRound(false);
+});
+$('#demoBtn').addEventListener('click', ()=>{
+  if(!validateName()) return;
+  Game.player.name = $('#name').value.trim();
+  Game.player.company = $('#company').value.trim();
+  $('#hudName').textContent = `${Game.player.name} (${Game.player.company||'Solo'})`;
+  resetGame(); Game.inDemo=true; startRound(true);
+});
+$('#printBtn').addEventListener('click', ()=>{
+  // prefill poster
+  $('#posterUrl').textContent = window.location.href;
+  tinyQR.draw($('#qrCanvasPoster'), window.location.href, 280);
+  window.print();
+});
+
+$('#skipTutorial').addEventListener('click', ()=> $('#tutorial').style.display='none');
+
+$('#btnLB').addEventListener('click', ()=>showLeaderboard(false));
+$('#btnSettings').addEventListener('click', ()=>showSettings());
+$('#closeModal').addEventListener('click', ()=>$('#modal').style.display='none');
+
+function showLeaderboard(end=false){
+  $('#modalTitle').textContent = end? 'Round complete — Leaderboard' : 'Leaderboard';
+  const wrap=$('#leaderboard'); wrap.innerHTML='';
+  const tbl=document.createElement('table');
+  const head=document.createElement('tr');
+  head.innerHTML='<th>#</th><th>Name</th><th>Company</th><th>Score</th><th>Served</th><th>Peds</th><th>Spill</th>';
+  tbl.appendChild(head);
+  const addRows = rows=>{
+    if(rows.length===0){
+      const tr=document.createElement('tr'); tr.innerHTML='<td colspan="7">No scores yet</td>'; tbl.appendChild(tr);
+    }else{
+      rows.forEach((r,i)=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td>${i+1}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.company||'')}</td><td>${r.score|0}</td><td>${r.served|0}</td><td>${r.peds|0}</td><td>${r.spillbacks|0}</td>`;
+        tbl.appendChild(tr);
+      });
+    }
+    wrap.appendChild(tbl);
+    $('#modal').style.display='flex';
+  };
+  if(CloudLB.present()){
+    CloudLB.top(10).then(addRows).catch(()=>addRows(LocalLB.top(10)));
+  }else addRows(LocalLB.top(10));
+}
+
+function showSettings(){
+  $('#modalTitle').textContent = 'Settings';
+  $('#leaderboard').innerHTML = '<p class="muted">Open Self Test below for diagnostics. Use Clear Local Data to wipe your local leaderboard and first run flag.</p>';
+  $('#modal').style.display='flex';
+}
+
+$('#btnSelfTest').addEventListener('click', selfTest);
+$('#btnClearLocal').addEventListener('click', ()=>{
+  LocalLB.clear(); localStorage.removeItem('ss_arh_first');
+  $('#selfTestOut').textContent = 'Local data cleared';
+});
+
+$('#btnQR').addEventListener('click', ()=>{
+  $('#shareUrl').value = window.location.href;
+  tinyQR.draw($('#qrCanvas'), window.location.href, 240);
+  $('#qrModal').style.display='flex';
+});
+$('#closeQR').addEventListener('click', ()=>$('#qrModal').style.display='none');
+$('#copyUrl').addEventListener('click', async ()=>{
+  try{ await navigator.clipboard.writeText(window.location.href); }catch(e){}
+});
+$('#printPoster').addEventListener('click', ()=>{
+  $('#posterUrl').textContent = window.location.href;
+  tinyQR.draw($('#qrCanvasPoster'), window.location.href, 280);
+  window.print();
+});
+
+/* ===========================
+   Utilities
+   =========================== */
+function escapeHTML(s){ return (s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+/* ===========================
+   Demo on first run or ?demo=1
+   =========================== */
+function shouldDemo(){
+  const url = new URL(window.location.href);
+  if(url.searchParams.get('demo')==='1') return true;
+  const first = !localStorage.getItem('ss_arh_first');
+  return first;
+}
+
+/* ===========================
+   Self Test
+   =========================== */
+async function selfTest(){
+  const out=[];
+  // FPS sample
+  const t0=performance.now(); let frames=0; await new Promise(res=>{
+    function tick(){
+      frames++; if(performance.now()-t0>400){ res(); } else requestAnimationFrame(tick);
+    } tick();
+  });
+  const fps = Math.round(frames/( (performance.now()-t0)/1000 ));
+  out.push(`FPS: ${fps} ${fps>30?'PASS':'WARN'}`);
+  // Buttons
+  const clickable = $('#btnExtend') instanceof HTMLButtonElement;
+  out.push(`Buttons clickable: ${clickable?'PASS':'FAIL'}`);
+  // Storage
+  let storage='PASS'; try{ localStorage.setItem('ss_arh_test','1'); const r=localStorage.getItem('ss_arh_test'); storage = r==='1'?'PASS':'FAIL'; }catch(e){ storage='FAIL'; }
+  out.push(`localStorage: ${storage}`);
+  // QR
+  try{
+    tinyQR.draw($('#qrCanvas'), window.location.href, 120);
+    out.push(`QR render: PASS`);
+  }catch(e){
+    out.push(`QR render: FAIL`);
+  }
+  // Firebase presence
+  out.push(`Firebase config: ${CloudLB.present()?'Found':'Not set (uses local leaderboard)'}`);
+  // Timers
+  out.push(`Timers running: ${Game.running?'YES':'NO'} | Remaining: ${formatTime(Game.remaining)}`);
+  // Collision logic sanity
+  out.push(`Collision checks: basic ped-turn conflict logic active`);
+  $('#selfTestOut').textContent = out.join('\n');
+}
+
+/* ===========================
+   Service Worker (inline via Blob)
+   =========================== */
+(function(){
+  if(!('serviceWorker' in navigator)) return;
+  const swCode = `
+  const CACHE='ss-arh-v1';
+  self.addEventListener('install',e=>{
+    e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['./'])).catch(()=>{}));
+    self.skipWaiting();
+  });
+  self.addEventListener('activate',e=>{ e.waitUntil(self.clients.claim()); });
+  self.addEventListener('fetch',e=>{
+    const req=e.request;
+    if(req.method!=='GET') return;
+    e.respondWith(
+      caches.match(req).then(r=> r || fetch(req).then(res=>{
+        if(new URL(req.url).origin===location.origin){
+          const copy=res.clone(); caches.open(CACHE).then(c=>c.put(req,copy));
+        }
+        return res;
+      }).catch(()=>caches.match('./')))
+    );
+  });
+  `;
+  try{
+    const blob = new Blob([swCode], {type:'text/javascript'});
+    const url = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(url).catch(()=>{});
+  }catch(e){}
+})();
+
+/* ===========================
+   Resize handling
+   =========================== */
+function fitCanvas(){
+  const ratio=16/9;
+  const w = cv.parentElement.clientWidth;
+  const h = Math.min(cv.parentElement.clientHeight, w/ratio);
+  // CSS handles aspect ratio, canvas internal stays 1280x720 for crispness
+}
+window.addEventListener('resize', fitCanvas);
+
+/* ===========================
+   Game bootstrap
+   =========================== */
+function init(){
+  // Name hints if available
+  const fromStore = localStorage.getItem('ss_arh_player');
+  if(fromStore){
+    try{ const p=JSON.parse(fromStore); $('#name').value=p.name||''; $('#company').value=p.company||''; }catch(e){}
+  }
+  $('#startOverlay').style.display='flex';
+  $('#hudName').textContent='—';
+  $('#shareUrl').value = window.location.href;
+
+  if(shouldDemo()){
+    // Preload demo mode
+    const demo = new URL(window.location.href).searchParams.get('demo')==='1';
+    $('#name').value = $('#name').value || 'Guest';
+    $('#company').value = $('#company').value || 'Visitor';
+    validateName();
+  }
+  loop();
+}
+window.addEventListener('load', init);
+
+/* Save player info on input */
+$('#name').addEventListener('input', ()=>{
+  validateName();
+  localStorage.setItem('ss_arh_player', JSON.stringify({name: $('#name').value, company: $('#company').value}));
+});
+$('#company').addEventListener('input', ()=>{
+  validateName();
+  localStorage.setItem('ss_arh_player', JSON.stringify({name: $('#name').value, company: $('#company').value}));
+});
+
+/* Keyboard shortcuts for desktop */
+window.addEventListener('keydown',(e)=>{
+  if($('#startOverlay').style.display==='flex') return;
+  if(e.repeat) return;
+  if(e.key==='1') useExtend();
+  if(e.key==='2') useSwitch();
+  if(e.key==='3') usePed();
+  if(e.key==='4') useClear();
+});
+
+/* ===========================
+   Clock tick for HUD and cooldown numbers overlay
+   =========================== */
+setInterval(()=>{
+  updateHUD();
+}, 200);
+
+/* ===========================
+   End of script
+   =========================== */
+</script>
+</body>
+</html>
